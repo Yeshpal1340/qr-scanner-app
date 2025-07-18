@@ -1,0 +1,117 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          build-essential \
+          git \
+          ffmpeg \
+          libsdl2-dev \
+          libsdl2-image-dev \
+          libsdl2-mixer-dev \
+          libsdl2-ttf-dev \
+          libportmidi-dev \
+          libswscale-dev \
+          libavformat-dev \
+          libavcodec-dev \
+          zlib1g-dev \
+          libgstreamer1.0-dev \
+          libgstreamer-plugins-base1.0-dev \
+          libzbar0 \
+          libzbar-dev \
+          openjdk-11-jdk \
+          unzip \
+          wget \
+          curl \
+          lib32z1 \
+          lib32ncurses6 \
+          lib32stdc++6
+
+    - name: Set up Android SDK
+      run: |
+        # Create Android SDK directory
+        mkdir -p $HOME/Android/Sdk
+        cd $HOME/Android/Sdk
+        
+        # Download and install command line tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+        unzip -q commandlinetools-linux-9477386_latest.zip
+        mkdir -p cmdline-tools/latest
+        mv cmdline-tools/* cmdline-tools/latest/ 2>/dev/null || true
+        
+        # Set environment variables
+        echo "ANDROID_HOME=$HOME/Android/Sdk" >> $GITHUB_ENV
+        echo "ANDROID_SDK_ROOT=$HOME/Android/Sdk" >> $GITHUB_ENV
+        echo "$HOME/Android/Sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+        echo "$HOME/Android/Sdk/platform-tools" >> $GITHUB_PATH
+        
+        # Accept licenses and install SDK components
+        yes | $HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager --licenses
+        $HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-30" "build-tools;30.0.3"
+
+    - name: Set up Android NDK
+      run: |
+        cd $HOME/Android/Sdk
+        wget -q https://dl.google.com/android/repository/android-ndk-r23b-linux.zip
+        unzip -q android-ndk-r23b-linux.zip
+        mkdir -p ndk
+        mv android-ndk-r23b ndk/23.2.8568313
+        echo "ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/23.2.8568313" >> $GITHUB_ENV
+
+    - name: Cache buildozer global directory
+      uses: actions/cache@v3
+      with:
+        path: ~/.buildozer
+        key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install buildozer==1.4.0 cython==0.29.33
+
+    - name: Build APK with Buildozer
+      run: |
+        # Set Java environment
+        export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+        
+        # Build the APK
+        buildozer android debug
+        
+        # List generated files
+        ls -la bin/
+
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: qr-scanner-apk
+        path: bin/*.apk
+        retention-days: 30
+
+    - name: Create Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: bin/*.apk
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
